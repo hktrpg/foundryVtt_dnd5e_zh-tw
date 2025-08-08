@@ -1,0 +1,195 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Extract version from module.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./module.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+          
+          # Validate version format
+          if [[ ! $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Invalid version format in module.json: $VERSION"
+            exit 1
+          fi
+
+      - name: Check for changes
+        id: changes
+        run: |
+          # Check if there are any changes compared to the last release
+          LAST_RELEASE=$(gh release list --limit 1 --json tagName | jq -r '.[0].tagName // empty')
+          
+          if [ -n "$LAST_RELEASE" ]; then
+            echo "Last release: $LAST_RELEASE"
+            CHANGES=$(git diff $LAST_RELEASE..HEAD --name-only --diff-filter=ACM | grep -v '^\.github/' | wc -l)
+          else
+            echo "No previous releases found"
+            CHANGES=1
+          fi
+          
+          echo "changes=$CHANGES" >> $GITHUB_OUTPUT
+          echo "Files changed: $CHANGES"
+
+      - name: Check if release already exists
+        id: check-release
+        run: |
+          RELEASE_EXISTS=$(gh release list --json tagName | jq -r ".[] | select(.tagName == \"v${{ steps.version.outputs.version }}\") | .tagName")
+          if [ "$RELEASE_EXISTS" = "v${{ steps.version.outputs.version }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Release v${{ steps.version.outputs.version }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Release v${{ steps.version.outputs.version }} does not exist"
+          fi
+
+      - name: Create package
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        run: |
+          # Create a temporary directory for packaging
+          mkdir -p temp_package
+          
+          # Copy all necessary files
+          cp module.json temp_package/
+          cp README.md temp_package/ 2>/dev/null || echo "README.md not found"
+          cp LICENSE temp_package/ 2>/dev/null || echo "LICENSE not found"
+          
+          # Copy directories if they exist
+          if [ -d "lang" ]; then
+            cp -r lang temp_package/
+          fi
+          
+          if [ -d "scripts" ]; then
+            cp -r scripts temp_package/
+          fi
+          
+          # Create the zip file
+          cd temp_package
+          zip -r ../module.zip .
+          cd ..
+          
+          # Verify the package
+          unzip -t module.zip
+          echo "Package created: module.zip"
+          echo "Package size: $(ls -lh module.zip | awk '{print $5}')"
+
+      - name: Generate release notes
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        id: release-notes
+        run: |
+          # Get the last release tag
+          LAST_RELEASE=$(gh release list --limit 1 --json tagName | jq -r '.[0].tagName // empty')
+          
+          if [ -n "$LAST_RELEASE" ]; then
+            # Generate changelog from commits
+            CHANGELOG=$(git log $LAST_RELEASE..HEAD --oneline --no-merges | head -10 | sed 's/^/- /')
+            if [ -z "$CHANGELOG" ]; then
+              CHANGELOG="- General updates and improvements"
+            fi
+          else
+            CHANGELOG="- Initial release"
+          fi
+          
+          # Create release body
+          cat > release_body.md << EOF
+          ## FoundryVTT DnD 5e Traditional Chinese Translation
+          
+          **Version:** ${{ steps.version.outputs.version }}
+          
+          ### Changes
+          $CHANGELOG
+          
+          ### Installation
+          1. Download the \`module.zip\` file
+          2. Extract it to your FoundryVTT modules directory
+          3. Enable the module in your world settings
+          
+          ### Files Included
+          - \`module.json\` - Module manifest
+          - \`lang/zh-tw.json\` - Traditional Chinese translations
+          - \`README.md\` - Documentation
+          - \`LICENSE\` - License information
+          
+          ### Compatibility
+          - FoundryVTT: v10-v13
+          - DnD 5e System: v4-v5
+          EOF
+          
+          echo "release-notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_body.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Release v${{ steps.version.outputs.version }}
+          body: ${{ steps.release-notes.outputs.release-notes }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./module.zip
+          asset_name: module.zip
+          asset_content_type: application/zip
+
+      - name: Update module.json download URL
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        run: |
+          # Update the download URL in module.json to point to the new release
+          sed -i 's|"download": "https://github.com/HKTRPG/foundryVtt_dnd5e_zh-tw/releases/latest/download/module.zip"|"download": "https://github.com/HKTRPG/foundryVtt_dnd5e_zh-tw/releases/download/v${{ steps.version.outputs.version }}/module.zip"|' module.json
+          
+          # Commit and push the updated module.json
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add module.json
+          git commit -m "Update download URL to v${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push
+
+      - name: Skip if no changes
+        if: steps.changes.outputs.changes == '0'
+        run: |
+          echo "No changes detected since last release. Skipping release creation."
+
+      - name: Skip if release exists
+        if: steps.check-release.outputs.exists == 'true'
+        run: |
+          echo "Release v${{ steps.version.outputs.version }} already exists. Skipping release creation."
+
+      - name: Success message
+        if: steps.check-release.outputs.exists == 'false' && steps.changes.outputs.changes != '0'
+        run: |
+          echo "✅ Release v${{ steps.version.outputs.version }} created successfully!"
+          echo "📦 Package: module.zip"
+          echo "🔗 Release URL: https://github.com/HKTRPG/foundryVtt_dnd5e_zh-tw/releases/tag/v${{ steps.version.outputs.version }}"
