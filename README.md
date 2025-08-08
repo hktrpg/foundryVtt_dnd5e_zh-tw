@@ -4,6 +4,8 @@
 
 根據'https://foundryvtt.com/packages/5e_chn' 及 'https://foundryvtt.com/packages/dnd5e-taiwan-zh-tw' 修改
 
+嘗試支援DND 5E 4.x 及5.x
+
 ## 鳴謝
 
 感謝所有中文化版本譯者
