@@ -5,10 +5,11 @@
     "authors": [
         {
             "name": "HKTRPG",
-            "discord": "zzz#8939"
+            "discord": "zzz#8939",
+            "url": "https://discord.hktrpg.com"
         }
     ],
-    "version": "1.0.0",
+    "version": "1.0.1",
     "compatibility": {
         "minimum": 10,
         "verified": 12,
