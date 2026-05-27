@@ -2,9 +2,10 @@
 
 # Foundry VTT DND5e 系統正體中文化
 
-根據'https://foundryvtt.com/packages/5e_chn' 及 'https://foundryvtt.com/packages/dnd5e-taiwan-zh-tw' 修改
-
-嘗試支援DND 5E 4.x 及5.x
+本Module已轉移至 https://github.com/hktrpg/foundryvtt-5e-zh-tw 請使用下列的Link更新
+```
+https://raw.githubusercontent.com/hktrpg/foundryvtt-5e-zh-tw/refs/heads/main/module.json 
+```
 
 ## 鳴謝
 
